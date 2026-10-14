@@ -231,9 +231,9 @@ button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
 <div id="ov" aria-hidden="true">
  <div class="modal" id="authModal" role="dialog" aria-modal="true" aria-labelledby="at" hidden>
   <div class="mh"><h2 id="at">Sync</h2><button id="closeA" aria-label="Close">&#10005;&#xFE0E;</button></div>
-  <div id="aIn"><p class="hint" style="margin:10px 0 14px;font-size:13px">Sign in with the same email on every device to sync focus time, tasks and settings.</p>
+  <div id="aIn"><p class="hint" style="margin:10px 0 14px;font-size:13px">Sign in with the same email on every device to sync focus time, tasks and settings. A sign-in link will be emailed to you.</p>
    <input type="text" id="aEmail" placeholder="you@example.com" inputmode="email" autocomplete="email" autocapitalize="off" autocorrect="off">
-   <div class="row"><span></span><button class="pri sm" id="aSend">Send code</button></div></div>
+   <div class="row"><span></span><button class="pri sm" id="aSend">Send link</button></div></div>
   <div id="aCode" hidden><p class="hint" style="margin:10px 0 14px;font-size:13px">Enter the code emailed to <b id="aTo"></b>.</p>
    <input type="text" id="aTok" placeholder="Code" inputmode="numeric" autocomplete="one-time-code" maxlength="8">
    <div class="row"><button class="sec sm" id="aBack">Back</button><button class="pri sm" id="aVerify">Verify</button></div></div>
@@ -560,7 +560,7 @@ function startSync() {
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });   // iOS suspends background sockets
 setInterval(refresh, 60000);
 
-/* ---- Sign-in: emailed code (works inside a Home Screen app, unlike links) ---- */
+/* ---- Sign-in: emailed magic link ---- */
 const msg = t => { $('aMsg').textContent = t; };
 function authStep(step) {
   step = step || (uid ? 'out' : 'in');
@@ -573,9 +573,9 @@ $('sync').onclick = openAuth; $('sync').onkeydown = e => { if (e.key === 'Enter'
 $('aSend').onclick = async () => {
   const email = $('aEmail').value.trim(); if (!email) return msg('Enter your email.');
   msg('Sending\u2026');
-  const {error} = await sb.auth.signInWithOtp({email, options: {shouldCreateUser: true}});
+  const {error} = await sb.auth.signInWithOtp({email, options: {shouldCreateUser: true, emailRedirectTo: location.origin + location.pathname}});
   if (error) return msg(error.message);
-  $('aTo').textContent = email; authStep('code'); msg('Check your inbox (and spam).'); $('aTok').focus();
+  msg('Link sent. Open the email on this device and tap Sign in. Check spam if it is missing.');
 };
 $('aVerify').onclick = async () => {
   msg('Verifying\u2026');
@@ -586,7 +586,7 @@ $('aVerify').onclick = async () => {
 $('aBack').onclick = () => authStep('in');
 $('aSignOut').onclick = async () => { await sb.auth.signOut(); closeSet(); };
 sb.auth.onAuthStateChange((ev, session) => setTimeout(() => {
-  if (session) { uid = session.user.id; me = session.user.email || ''; startSync(); }
+  if (session) { uid = session.user.id; me = session.user.email || ''; startSync(); if (!$('authModal').hidden) closeSet(); }
   else {
     uid = null; me = ''; synced = false; setSync('Local only');
     if (ev === 'INITIAL_SESSION' && !localStorage.getItem('ff-asked')) { try { localStorage.setItem('ff-asked', '1'); } catch (_) {} openAuth(); }
