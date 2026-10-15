@@ -1,0 +1,13 @@
+name: Keep FocusFlow warm
+on:
+  schedule:
+    - cron: '17 3 */2 * *'
+  workflow_dispatch:
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping the site and the database
+        run: |
+          curl -fsS -o /dev/null https://focusflow-opal-nine.vercel.app/
+          curl -s -o /dev/null -w "database: %{http_code}\n" "https://zveyzhgrtjabejhtwpnv.supabase.co/rest/v1/kv?select=key&limit=1" -H "apikey: sb_publishable_B8IhqiYBgPOWL71X_EmtFQ_amylLUf9" || true
