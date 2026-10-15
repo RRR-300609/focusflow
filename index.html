@@ -106,7 +106,7 @@ html[data-theme=dark] .add{color:color-mix(in srgb,var(--acc) 40%,white)}
 .tform{display:flex;flex-direction:column;gap:10px;padding:14px;border-radius:16px;background:var(--field)}
 .tform>div{display:flex;gap:8px;justify-content:flex-end}
 .tform label{font-size:13px;color:var(--mut);display:flex;align-items:center;gap:8px}
-input[type=text],input[type=number],select{background:var(--field);border:1px solid var(--bd);border-radius:12px;padding:10px 12px;font-size:16px;width:100%}
+input[type=text],input[type=password],input[type=number],select{background:var(--field);border:1px solid var(--bd);border-radius:12px;padding:10px 12px;font-size:16px;width:100%}
 .tform input[type=number]{width:72px}
 .cfoot{display:flex;justify-content:space-between;font-size:13px;color:var(--mut);padding-top:14px}
 .cfoot button{color:var(--mut);font-size:13px}.cfoot button:hover{color:var(--ink)}
@@ -231,14 +231,13 @@ button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
 <div id="ov" aria-hidden="true">
  <div class="modal" id="authModal" role="dialog" aria-modal="true" aria-labelledby="at" hidden>
   <div class="mh"><h2 id="at">Sync</h2><button id="closeA" aria-label="Close">&#10005;&#xFE0E;</button></div>
-  <div id="aIn"><p class="hint" style="margin:10px 0 14px;font-size:13px">Sign in with the same email on every device to sync focus time, tasks and settings. A sign-in link will be emailed to you.</p>
-   <input type="text" id="aEmail" placeholder="you@example.com" inputmode="email" autocomplete="email" autocapitalize="off" autocorrect="off">
-   <div class="row"><span></span><button class="pri sm" id="aSend">Send link</button></div></div>
-  <div id="aCode" hidden><p class="hint" style="margin:10px 0 14px;font-size:13px">Enter the code emailed to <b id="aTo"></b>.</p>
-   <input type="text" id="aTok" placeholder="Code" inputmode="numeric" autocomplete="one-time-code" maxlength="8">
-   <div class="row"><button class="sec sm" id="aBack">Back</button><button class="pri sm" id="aVerify">Verify</button></div></div>
+  <div id="aIn"><p class="hint" style="margin:10px 0 14px;font-size:13px">Use the same email and password on every device to sync focus time, tasks, the running timer and settings.</p>
+   <input type="text" id="aEmail" placeholder="Email" inputmode="email" autocomplete="username" autocapitalize="off" autocorrect="off" style="margin-bottom:10px">
+   <input type="password" id="aPass" placeholder="Password (6+ characters)" autocomplete="current-password">
+   <div class="row"><button class="sec sm" id="aCreate">Create account</button><button class="pri sm" id="aSignIn">Sign in</button></div>
+   <button id="aReset" class="hint" style="text-decoration:underline;font-size:13px">Forgot password?</button></div>
   <div id="aOut" hidden><p class="hint" style="margin:10px 0 14px;font-size:13px">Signed in as <b id="aMe"></b></p>
-   <div class="row"><span></span><button class="sec sm" id="aSignOut">Sign out</button></div></div>
+   <div class="row"><span class="hint" id="aLast"></span><button class="sec sm" id="aSignOut">Sign out</button></div></div>
   <p class="hint" id="aMsg" style="min-height:18px;font-size:13px"></p>
  </div>
  <div class="modal" id="histModal" role="dialog" aria-modal="true" aria-labelledby="ht" hidden>
@@ -271,6 +270,9 @@ button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
   <h3>Sound</h3>
   <div class="row"><span>Chime</span><select data-k="chime" id="chimeSel"><option value="bell">Soft bell</option><option value="triad">Crystal triad</option><option value="glass">Glass tap</option></select></div>
   <div class="row"><span>Volume</span><span style="display:flex;align-items:center;gap:12px"><input type="range" data-k="vol" min="0" max="100" id="vol"><span id="volT" style="width:38px;text-align:right;font-size:14px">55%</span></span></div>
+  <h3>Data</h3>
+  <div class="row"><span>Backup file</span><span style="display:flex;gap:8px"><button class="sec sm" id="expBtn">Export</button><button class="sec sm" id="impBtn">Import</button></span></div>
+  <input type="file" id="impFile" accept="application/json" hidden>
   <h3>Appearance</h3>
   <div class="row"><span>Theme</span><div class="seg" id="themeSeg"><button data-t="light">Light</button><button data-t="dark">Dark</button><button data-t="system">System</button></div></div>
  </div>
@@ -328,7 +330,7 @@ function finish() {
     new Notification('FocusFlow', {body: S.mode === 'work' ? 'Focus session complete. Time for a break.' : 'Break over. Back to focus.'});
   if (S.mode === 'work') {
     S.cycle++; save();
-    addSession({id: Date.now().toString(36) + DEV.slice(0, 4), min: S.set.work, c: 1, day: dayKey(), task: S.active});
+    addSession({id: 's' + Math.round(endAt / 1000), min: S.set.work, c: 1, day: dayKey(), task: S.active});
     renderTasks(); renderStats();
   }
   const n = next(); setMode(n);
@@ -502,40 +504,67 @@ const SB_URL = 'https://zveyzhgrtjabejhtwpnv.supabase.co';
 const SB_KEY = 'sb_publishable_B8IhqiYBgPOWL71X_EmtFQ_amylLUf9';   // publishable key: safe in the browser, data is protected by row-level security
 const sb = window.supabase.createClient(SB_URL, SB_KEY);
 const pending = new Set();
-let uid = null, me = '', pushTimer = 0, pullTimer = 0, applying = false, synced = false, subscribed = false;
-const setSync = t => { const e = $('sync'); e.textContent = t; e.dataset.s = t === 'Synced' ? 'ok' : t === 'Syncing\u2026' ? 'busy' : 'off'; e.title = t; };
+let uid = null, me = '', pushTimer = 0, pullTimer = 0, applying = false, applyingT = false, synced = false, subscribed = false, lastT = 0, lastSync = 0;
+const setSync = t => { const e = $('sync'); e.textContent = t; e.dataset.s = t === 'Synced' ? 'ok' : t === 'Syncing\u2026' ? 'busy' : 'off';
+  e.title = t + (lastSync ? ' \u00b7 last sync ' + new Date(lastSync).toLocaleTimeString() : ''); };
 const taskN = id => sum(S.log.filter(l => l.task === id), 'c');
+
 function upload(e) {
   if (!uid) return; pending.add(e.id);
   sb.from('sessions').upsert({user_id: uid, id: e.id, min: e.min, c: e.c, day: e.day, task: e.task == null ? null : String(e.task)}, {onConflict: 'user_id,id'})
     .then(({error}) => { if (error) setSync('Sync paused'); else pending.delete(e.id); });
 }
-function addSession(e) { S.log.push(e); localSave(); upload(e); }
+function addSession(e) { if (S.log.some(l => l.id === e.id)) return; S.log.push(e); localSave(); upload(e); }
 function removeToday() {
   const gone = todayLog(); S.log = S.log.filter(l => l.day !== dayKey()); localSave();
   if (uid && gone.length) sb.from('sessions').delete().in('id', gone.map(l => l.id)).then(() => {});
 }
+function setKv(key, data) {
+  return sb.from('kv').upsert({user_id: uid, key, data, updated_at: new Date().toISOString()}, {onConflict: 'user_id,key'})
+    .then(({error}) => { if (error) setSync('Sync paused'); });
+}
 function pushState() {
   if (!uid || applying) return;
   clearTimeout(pushTimer);
-  pushTimer = setTimeout(() => sb.from('app_state').upsert({user_id: uid, data: {by: DEV, t: S.t, set: S.set, tasks: S.tasks, active: S.active, cycle: S.cycle}, updated_at: new Date().toISOString()})
-    .then(({error}) => { if (error) setSync('Sync paused'); }), 600);
+  pushTimer = setTimeout(() => setKv('state', {by: DEV, t: S.t, set: S.set, tasks: S.tasks, active: S.active, cycle: S.cycle, seen: Date.now()}), 600);
 }
 function syncInputs() {
   document.querySelectorAll('[data-k]').forEach(el => { const v = S.set[el.dataset.k]; if (el.type === 'checkbox') el.checked = v; else el.value = v; });
   $('volT').textContent = S.set.vol + '%'; $('vol').style.setProperty('--p', S.set.vol + '%');
 }
 function applyRemote(d) {
-  if (!d || d.by === DEV || d.t <= S.t) return;           // ignore own echoes and older state
+  if (!d || d.by === DEV || d.t <= S.t) return;            // ignore own echoes and older state
   applying = true;
   Object.assign(S, {set: {...DEF, ...d.set}, tasks: d.tasks || [], active: d.active ?? null, cycle: d.cycle || 0, t: d.t});
   localSave(); applying = false;
   syncInputs(); applyTheme(); if (!running) left = dur(S.mode); renderStats(); renderTasks();
 }
-async function pullState() {
-  const {data, error} = await sb.from('app_state').select('data').maybeSingle();
+
+/* Live timer: start, pause, reset and mode changes on one device appear on the others */
+const _start = start, _pause = pause, _setMode = setMode;
+function pushTimerState() {
+  if (!uid || applyingT) return; lastT = Date.now();
+  setKv('timer', {by: DEV, t: lastT, mode: S.mode, running, endAt, left: Math.round(left)});
+}
+start = function () { _start(); pushTimerState(); };
+pause = function () { _pause(); pushTimerState(); };
+setMode = function (m) { _setMode(m); pushTimerState(); };
+const _reset = $('resetBtn').onclick; $('resetBtn').onclick = () => { _reset(); pushTimerState(); };
+function applyTimer(d) {
+  if (!d || d.by === DEV || d.t <= lastT) return; lastT = d.t;
+  if (d.running ? d.endAt < Date.now() - 5000 : d.t < Date.now() - 600000) return;   // ignore stale states
+  applyingT = true;
+  if (d.mode !== S.mode) _setMode(d.mode);
+  if (d.running) { left = Math.max(0, d.endAt - Date.now()); endAt = d.endAt; running = true; } else { running = false; left = d.left; }
+  draw(); applyingT = false;
+}
+
+async function pullKv() {
+  const {data, error} = await sb.from('kv').select('key,data');
   if (error) return setSync('Sync paused');
-  if (data) applyRemote(data.data); else pushState();
+  const m = Object.fromEntries(data.map(r => [r.key, r.data]));
+  if (m.state) applyRemote(m.state); else pushState();
+  if (m.timer) applyTimer(m.timer);
 }
 async function pull() {
   let all = [], from = 0;
@@ -545,47 +574,78 @@ async function pull() {
     all = all.concat(data); if (data.length < 1000) break; from += 1000;
   }
   const remote = all.map(r => ({...r, task: r.task == null ? null : Number(r.task)})), ids = new Set(remote.map(r => r.id));
-  if (!synced) { synced = true; S.log.filter(l => !ids.has(l.id)).forEach(upload); }     // first connect: upload this device's history
+  if (!synced) { synced = true; S.log.filter(l => !ids.has(l.id)).forEach(upload); }      // first connect: upload this device's history
+  S.log.filter(l => !ids.has(l.id) && pending.has(l.id)).forEach(upload);                  // retry anything that failed while offline
   S.log = remote.concat(S.log.filter(l => !ids.has(l.id) && pending.has(l.id)));
-  localSave(); renderStats(); renderTasks(); setSync('Synced');
+  lastSync = Date.now(); localSave(); renderStats(); renderTasks(); setSync(navigator.onLine ? 'Synced' : 'Offline');
   if (ov.classList.contains('open') && !$('histModal').hidden) renderHist();
 }
-const refresh = () => { if (!uid) return; clearTimeout(pullTimer); pullTimer = setTimeout(() => { pullState(); pull(); }, 300); };
+const refresh = () => { if (!uid) return; clearTimeout(pullTimer); pullTimer = setTimeout(() => { pullKv(); pull(); }, 300); };
 function startSync() {
   setSync('Syncing\u2026'); refresh();
   if (subscribed) return; subscribed = true;
-  sb.channel('focusflow').on('postgres_changes', {event: '*', schema: 'public', table: 'sessions'}, refresh)
-    .on('postgres_changes', {event: '*', schema: 'public', table: 'app_state'}, refresh).subscribe();
+  sb.channel('focusflow')
+    .on('postgres_changes', {event: '*', schema: 'public', table: 'sessions'}, refresh)
+    .on('postgres_changes', {event: '*', schema: 'public', table: 'kv'}, p => {          // state and timer arrive instantly
+      const r = p.new; if (!r || !r.key) return;
+      if (r.key === 'timer') applyTimer(r.data); else if (r.key === 'state') applyRemote(r.data);
+    }).subscribe();
 }
-document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });   // iOS suspends background sockets
-setInterval(refresh, 60000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });   // iOS suspends background connections
+addEventListener('online', refresh); addEventListener('offline', () => uid && setSync('Offline'));
+setInterval(refresh, 60000);                                                               // also keeps the database active
 
-/* ---- Sign-in: emailed magic link ---- */
+/* ---- Account: email + password ---- */
 const msg = t => { $('aMsg').textContent = t; };
-function authStep(step) {
-  step = step || (uid ? 'out' : 'in');
-  $('aIn').hidden = step !== 'in'; $('aCode').hidden = step !== 'code'; $('aOut').hidden = step !== 'out';
-  $('aMe').textContent = me; msg('');
+function authStep() {
+  $('aIn').hidden = !!uid; $('aOut').hidden = !uid; $('aMe').textContent = me;
+  $('aLast').textContent = lastSync ? 'Last sync ' + new Date(lastSync).toLocaleTimeString() : ''; msg('');
 }
 function openAuth() { authStep(); showModal('auth'); }
 $('sync').setAttribute('role', 'button'); $('sync').tabIndex = 0;
 $('sync').onclick = openAuth; $('sync').onkeydown = e => { if (e.key === 'Enter') openAuth(); };
-$('aSend').onclick = async () => {
-  const email = $('aEmail').value.trim(); if (!email) return msg('Enter your email.');
-  msg('Sending\u2026');
-  const {error} = await sb.auth.signInWithOtp({email, options: {shouldCreateUser: true, emailRedirectTo: location.origin + location.pathname}});
-  if (error) return msg(error.message);
-  msg('Link sent. Open the email on this device and tap Sign in. Check spam if it is missing.');
+const nice = m => /invalid login/i.test(m) ? 'Wrong email or password.' : /already registered/i.test(m) ? 'That email already has an account. Use Sign in.' : /rate limit/i.test(m) ? 'Too many attempts. Wait a few minutes.' : m;
+async function authGo(kind) {
+  const email = $('aEmail').value.trim(), password = $('aPass').value;
+  if (!email || !password) return msg('Enter your email and password.');
+  msg(kind === 'in' ? 'Signing in\u2026' : 'Creating account\u2026');
+  const {data, error} = kind === 'in' ? await sb.auth.signInWithPassword({email, password}) : await sb.auth.signUp({email, password});
+  if (error) return msg(nice(error.message));
+  if (!data.session) return msg('Account created. Confirm it from the email we sent, then sign in.');
+  $('aPass').value = '';
+}
+$('aSignIn').onclick = () => authGo('in'); $('aCreate').onclick = () => authGo('new');
+$('aPass').onkeydown = e => { if (e.key === 'Enter') authGo('in'); };
+$('aReset').onclick = async () => {
+  const email = $('aEmail').value.trim(); if (!email) return msg('Enter your email first.');
+  const {error} = await sb.auth.resetPasswordForEmail(email, {redirectTo: location.origin + location.pathname});
+  msg(error ? nice(error.message) : 'Reset link sent. Open it on this device, then choose a new password.');
 };
-$('aVerify').onclick = async () => {
-  msg('Verifying\u2026');
-  const {error} = await sb.auth.verifyOtp({email: $('aTo').textContent, token: $('aTok').value.trim(), type: 'email'});
-  if (error) return msg(error.message);
-  $('aTok').value = ''; closeSet();
-};
-$('aBack').onclick = () => authStep('in');
 $('aSignOut').onclick = async () => { await sb.auth.signOut(); closeSet(); };
+
+/* ---- Backup: export and import (merges by session id, safe to repeat) ---- */
+$('expBtn').onclick = () => {
+  const b = new Blob([JSON.stringify({v: 1, exported: new Date().toISOString(), set: S.set, tasks: S.tasks, log: S.log}, null, 1)], {type: 'application/json'});
+  const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = 'focusflow-backup-' + new Date().toISOString().slice(0, 10) + '.json';
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+};
+$('impBtn').onclick = () => $('impFile').click();
+$('impFile').onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  try {
+    const d = JSON.parse(await f.text());
+    (d.log || []).forEach(l => { if (l && l.id && l.day) addSession({id: String(l.id), min: +l.min || 0, c: +l.c || 0, day: l.day, task: l.task ?? null}); });
+    if (Array.isArray(d.tasks) && !S.tasks.length) { S.tasks = d.tasks; save(); }
+    renderStats(); renderTasks();
+  } catch (_) {}
+  e.target.value = '';
+};
+
 sb.auth.onAuthStateChange((ev, session) => setTimeout(() => {
+  if (ev === 'PASSWORD_RECOVERY') {
+    const np = prompt('Choose a new password (6+ characters)');
+    if (np) sb.auth.updateUser({password: np}).then(({error}) => alert(error ? error.message : 'Password updated.'));
+  }
   if (session) { uid = session.user.id; me = session.user.email || ''; startSync(); if (!$('authModal').hidden) closeSet(); }
   else {
     uid = null; me = ''; synced = false; setSync('Local only');
