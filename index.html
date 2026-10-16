@@ -11,7 +11,7 @@
 <meta name="format-detection" content="telephone=no">
 <title>FocusFlow</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%8F%B1%3C/text%3E%3C/svg%3E">
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js"></script>
 <style>
 /* ============ Design tokens ============ */
 :root{--ink:#2a2326;--mut:rgba(40,30,32,.62);--glass:rgba(255,255,255,.3);--bd:rgba(255,255,255,.32);--field:rgba(255,255,255,.38);--modal:rgba(255,255,255,.78);--shadow:0 8px 32px rgba(0,0,0,.12),inset 0 1px 0 rgba(255,255,255,.3);
@@ -502,11 +502,12 @@ document.addEventListener('mouseleave', () => glow.style.opacity = 0);
 /* ================= Cross-device sync (Supabase) ================= */
 const SB_URL = 'https://zveyzhgrtjabejhtwpnv.supabase.co';
 const SB_KEY = 'sb_publishable_B8IhqiYBgPOWL71X_EmtFQ_amylLUf9';   // publishable key: safe in the browser, data is protected by row-level security
-const sb = window.supabase.createClient(SB_URL, SB_KEY);
+const sb = window.supabase.createClient(SB_URL, SB_KEY, {auth: {persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storage: window.localStorage, storageKey: 'focusflow-auth'}});
 const pending = new Set();
+let dbg = '', restoring = false, manualOut = false;
 let uid = null, me = '', pushTimer = 0, pullTimer = 0, applying = false, applyingT = false, synced = false, subscribed = false, lastT = 0, lastSync = 0;
 const setSync = t => { const e = $('sync'); e.textContent = t; e.dataset.s = t === 'Synced' ? 'ok' : t === 'Syncing\u2026' ? 'busy' : 'off';
-  e.title = t + (lastSync ? ' \u00b7 last sync ' + new Date(lastSync).toLocaleTimeString() : ''); };
+  e.title = t + (lastSync ? ' \u00b7 last sync ' + new Date(lastSync).toLocaleTimeString() : '') + (dbg ? ' \u00b7 ' + dbg : ''); };
 const taskN = id => sum(S.log.filter(l => l.task === id), 'c');
 
 function upload(e) {
@@ -599,7 +600,7 @@ setInterval(refresh, 60000);                                                    
 const msg = t => { $('aMsg').textContent = t; };
 function authStep() {
   $('aIn').hidden = !!uid; $('aOut').hidden = !uid; $('aMe').textContent = me;
-  $('aLast').textContent = lastSync ? 'Last sync ' + new Date(lastSync).toLocaleTimeString() : ''; msg('');
+  $('aLast').textContent = lastSync ? 'Last sync ' + new Date(lastSync).toLocaleTimeString() : ''; msg(uid || !dbg ? '' : 'Status: ' + dbg);
 }
 function openAuth() { authStep(); showModal('auth'); }
 $('sync').setAttribute('role', 'button'); $('sync').tabIndex = 0;
@@ -621,7 +622,7 @@ $('aReset').onclick = async () => {
   const {error} = await sb.auth.resetPasswordForEmail(email, {redirectTo: location.origin + location.pathname});
   msg(error ? nice(error.message) : 'Reset link sent. Open it on this device, then choose a new password.');
 };
-$('aSignOut').onclick = async () => { await sb.auth.signOut(); closeSet(); };
+$('aSignOut').onclick = async () => { manualOut = true; try { localStorage.removeItem('ff-auth-backup'); } catch (_) {} await sb.auth.signOut(); closeSet(); };
 
 /* ---- Backup: export and import (merges by session id, safe to repeat) ---- */
 $('expBtn').onclick = () => {
@@ -641,18 +642,35 @@ $('impFile').onchange = async e => {
   e.target.value = '';
 };
 
-sb.auth.onAuthStateChange((ev, session) => setTimeout(() => {
+const BK = 'ff-auth-backup';    // second copy of the login, used only if the browser drops the first
+sb.auth.onAuthStateChange((ev, session) => setTimeout(async () => {
+  dbg = ev + (session ? '' : ' (no session)');
   if (ev === 'PASSWORD_RECOVERY') {
     const np = prompt('Choose a new password (6+ characters)');
     if (np) sb.auth.updateUser({password: np}).then(({error}) => alert(error ? error.message : 'Password updated.'));
   }
-  if (session) { uid = session.user.id; me = session.user.email || ''; startSync(); if (!$('authModal').hidden) closeSet(); }
-  else {
-    uid = null; me = ''; synced = false; setSync('Local only');
-    if (ev === 'INITIAL_SESSION' && !localStorage.getItem('ff-asked')) { try { localStorage.setItem('ff-asked', '1'); } catch (_) {} openAuth(); }
+  if (session) {
+    try { localStorage.setItem(BK, JSON.stringify({r: session.refresh_token})); } catch (_) {}
+    restoring = false; manualOut = false; uid = session.user.id; me = session.user.email || ''; startSync();
+    if (!$('authModal').hidden) closeSet();
+    return;
   }
+  let bk = null; try { bk = JSON.parse(localStorage.getItem(BK)); } catch (_) {}
+  if (!manualOut && bk && bk.r && !restoring) {              // login vanished without the user signing out: restore it
+    restoring = true; setSync('Restoring\u2026');
+    const {error} = await sb.auth.refreshSession({refresh_token: bk.r});
+    if (!error) return;                                      // SIGNED_IN follows and finishes the job
+    restoring = false; dbg += ' \u00b7 restore failed: ' + error.message;
+    try { localStorage.removeItem(BK); } catch (_) {}
+  }
+  uid = null; me = ''; synced = false; setSync('Local only');
+  if (ev === 'INITIAL_SESSION' && !localStorage.getItem('ff-asked')) { try { localStorage.setItem('ff-asked', '1'); } catch (_) {} openAuth(); }
 }, 0));
-function initSync() { setSync('Local only'); }
+function initSync() {
+  try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (_) {}   // ask Safari not to evict saved data
+  setSync('Connecting\u2026');
+  setTimeout(() => { if ($('sync').textContent === 'Connecting\u2026') setSync('Local only'); }, 8000);
+}
 
 /* ================= Init ================= */
 applyTheme(); setMode(S.mode); renderStats(); renderTasks(); initSync();
